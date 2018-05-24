@@ -1,5 +1,5 @@
 const builtins = require('./builtins');
-const path = require('path');
+const Path = require('path');
 const glob = require('glob');
 const fs = require('./utils/fs');
 const micromatch = require('micromatch');
@@ -28,6 +28,10 @@ class Resolver {
     this.rootPackage = null;
   }
 
+  /**
+   * @param {string} input input path
+   * @param {string=} parent parent path
+   */
   async resolve(input, parent) {
     let filename = input;
 
@@ -39,7 +43,7 @@ class Resolver {
 
     // Check if this is a glob
     if (GLOB_RE.test(filename) && glob.hasMagic(filename)) {
-      return {path: path.resolve(path.dirname(parent), filename)};
+      return {path: Path.resolve(Path.dirname(parent), filename)};
     }
 
     // Get file extensions to search
@@ -49,7 +53,7 @@ class Resolver {
 
     if (parent) {
       // parent's extension given high priority
-      const parentExt = path.extname(parent);
+      const parentExt = Path.extname(parent);
       extensions = [parentExt, ...extensions.filter(ext => ext !== parentExt)];
     }
 
@@ -66,7 +70,7 @@ class Resolver {
     }
 
     if (!resolved) {
-      let dir = parent ? path.dirname(parent) : process.cwd();
+      let dir = parent ? Path.dirname(parent) : process.cwd();
       let err = new Error(`Cannot find module '${input}' from '${dir}'`);
       err.code = 'MODULE_NOT_FOUND';
       throw err;
@@ -76,8 +80,12 @@ class Resolver {
     return resolved;
   }
 
+  /**
+   * @param {string} filename
+   * @param {string=} parent
+   */
   async resolveModule(filename, parent) {
-    let dir = parent ? path.dirname(parent) : process.cwd();
+    let dir = parent ? Path.dirname(parent) : process.cwd();
 
     // If this isn't the entrypoint, resolve the input file to an absolute path
     if (parent) {
@@ -88,7 +96,7 @@ class Resolver {
     filename = await this.loadAlias(filename, dir);
 
     // Return just the file path if this is a file, not in node_modules
-    if (path.isAbsolute(filename)) {
+    if (Path.isAbsolute(filename)) {
       return {
         filePath: filename
       };
@@ -114,41 +122,53 @@ class Resolver {
     return resolved;
   }
 
+  /**
+   * @param {string} filename
+   * @param {string} parent
+   */
   getCacheKey(filename, parent) {
-    return (parent ? path.dirname(parent) : '') + ':' + filename;
+    return (parent ? Path.dirname(parent) : '') + ':' + filename;
   }
 
+  /**
+   * @param {string} filename
+   * @param {string} dir
+   */
   resolveFilename(filename, dir) {
     switch (filename[0]) {
       case '/':
         // Absolute path. Resolve relative to project root.
-        return path.resolve(this.options.rootDir, filename.slice(1));
+        return Path.resolve(this.options.rootDir, filename.slice(1));
 
       case '~':
         // Tilde path. Resolve relative to nearest node_modules directory,
         // or the project root - whichever comes first.
         while (
           dir !== this.options.rootDir &&
-          path.basename(path.dirname(dir)) !== 'node_modules'
+          Path.basename(Path.dirname(dir)) !== 'node_modules'
         ) {
-          dir = path.dirname(dir);
+          dir = Path.dirname(dir);
         }
 
-        return path.join(dir, filename.slice(1));
+        return Path.join(dir, filename.slice(1));
 
       case '.':
         // Relative path.
-        return path.resolve(dir, filename);
+        return Path.resolve(dir, filename);
 
       default:
         // Module
-        return path.normalize(filename);
+        return Path.normalize(filename);
     }
   }
 
+  /**
+   * @param {string} filename
+   * @param {string[]} extensions
+   */
   async loadRelative(filename, extensions) {
     // Find a package.json file in the current package.
-    let pkg = await this.findPackage(path.dirname(filename));
+    let pkg = await this.findPackage(Path.dirname(filename));
 
     // First try as a file, then as a directory.
     return (
@@ -157,30 +177,34 @@ class Resolver {
     );
   }
 
+  /**
+   * @param {string} filename
+   * @param {string=} dir
+   */
   async findNodeModulePath(filename, dir) {
     if (builtins[filename]) {
       return {filePath: builtins[filename]};
     }
 
     let parts = this.getModuleParts(filename);
-    let root = path.parse(dir).root;
+    let root = Path.parse(dir).root;
 
     while (dir !== root) {
       // Skip node_modules directories
-      if (path.basename(dir) === 'node_modules') {
-        dir = path.dirname(dir);
+      if (Path.basename(dir) === 'node_modules') {
+        dir = Path.dirname(dir);
       }
 
       try {
         // First, check if the module directory exists. This prevents a lot of unnecessary checks later.
-        let moduleDir = path.join(dir, 'node_modules', parts[0]);
+        let moduleDir = Path.join(dir, 'node_modules', parts[0]);
         let stats = await fs.stat(moduleDir);
         if (stats.isDirectory()) {
           return {
             moduleName: parts[0],
             subPath: parts[1],
             moduleDir: moduleDir,
-            filePath: path.join(dir, 'node_modules', filename)
+            filePath: Path.join(dir, 'node_modules', filename)
           };
         }
       } catch (err) {
@@ -188,10 +212,14 @@ class Resolver {
       }
 
       // Move up a directory
-      dir = path.dirname(dir);
+      dir = Path.dirname(dir);
     }
   }
 
+  /**
+   * @param {object} module
+   * @param {string} extensions
+   */
   async loadNodeModules(module, extensions) {
     try {
       // If a module was specified as a module sub-path (e.g. some-module/some/path),
@@ -211,6 +239,9 @@ class Resolver {
     }
   }
 
+  /**
+   * @param {string} file
+   */
   async isFile(file) {
     try {
       let stat = await fs.stat(file);
@@ -220,6 +251,11 @@ class Resolver {
     }
   }
 
+  /**
+   * @param {string} dir
+   * @param {string[]} extensions
+   * @param {object=} pkg
+   */
   async loadDirectory(dir, extensions, pkg) {
     try {
       pkg = await this.readPackage(dir);
@@ -238,11 +274,14 @@ class Resolver {
     }
 
     // Fall back to an index file inside the directory.
-    return await this.loadAsFile(path.join(dir, 'index'), extensions, pkg);
+    return await this.loadAsFile(Path.join(dir, 'index'), extensions, pkg);
   }
 
+  /**
+   * @param {string} dir
+   */
   async readPackage(dir) {
-    let file = path.join(dir, 'package.json');
+    let file = Path.join(dir, 'package.json');
     if (this.packageCache.has(file)) {
       return this.packageCache.get(file);
     }
@@ -266,6 +305,9 @@ class Resolver {
     return pkg;
   }
 
+  /**
+   * @param {object} pkg
+   */
   getPackageMain(pkg) {
     let {browser} = pkg;
 
@@ -285,9 +327,14 @@ class Resolver {
       main = 'index';
     }
 
-    return path.resolve(pkg.pkgdir, main);
+    return Path.resolve(pkg.pkgdir, main);
   }
 
+  /**
+   * @param {string} file
+   * @param {string[]} extensions
+   * @param {object} pkg
+   */
   async loadAsFile(file, extensions, pkg) {
     // Try all supported extensions
     for (let f of this.expandFile(file, extensions, pkg)) {
@@ -297,6 +344,12 @@ class Resolver {
     }
   }
 
+  /**
+   * @param {string} file
+   * @param {string[]} extensions
+   * @param {object=} pkg
+   * @param {boolean=true} expandAliases
+   */
   expandFile(file, extensions, pkg, expandAliases = true) {
     // Expand extensions and aliases
     let res = [];
@@ -316,6 +369,10 @@ class Resolver {
     return res;
   }
 
+  /**
+   * @param {string} filename
+   * @param {object=} pkg
+   */
   resolveAliases(filename, pkg) {
     // First resolve local package aliases, then project global ones.
     return this.resolvePackageAliases(
@@ -324,6 +381,10 @@ class Resolver {
     );
   }
 
+  /**
+   * @param {string} filename
+   * @param {object=} pkg
+   */
   resolvePackageAliases(filename, pkg) {
     if (!pkg) {
       return filename;
@@ -338,6 +399,11 @@ class Resolver {
     );
   }
 
+  /**
+   * @param {string} filename
+   * @param {string} dir
+   * @param {{[name: string]: string}} aliases
+   */
   getAlias(filename, dir, aliases) {
     if (!filename || !aliases || typeof aliases !== 'object') {
       return null;
@@ -346,8 +412,8 @@ class Resolver {
     let alias;
 
     // If filename is an absolute path, get one relative to the package.json directory.
-    if (path.isAbsolute(filename)) {
-      filename = path.relative(dir, filename);
+    if (Path.isAbsolute(filename)) {
+      filename = Path.relative(dir, filename);
       if (filename[0] !== '.') {
         filename = './' + filename;
       }
@@ -362,7 +428,7 @@ class Resolver {
         alias = aliases[parts[0]];
         if (typeof alias === 'string') {
           // Append the filename back onto the aliased module.
-          alias = path.join(alias, ...parts.slice(1));
+          alias = Path.join(alias, ...parts.slice(1));
         }
       }
     }
@@ -375,13 +441,17 @@ class Resolver {
     // If the alias is a relative path, then resolve
     // relative to the package.json directory.
     if (alias && alias[0] === '.') {
-      return path.resolve(dir, alias);
+      return Path.resolve(dir, alias);
     }
 
     // Otherwise, assume the alias is a module
     return alias;
   }
 
+  /**
+   * @param {{[name: string]: string}} aliases
+   * @param {string} filename
+   */
   lookupAlias(aliases, filename) {
     // First, try looking up the exact filename
     let alias = aliases[filename];
@@ -400,20 +470,27 @@ class Resolver {
     }
   }
 
+  /**
+   * @param {string} dir
+   */
   async findPackage(dir) {
     // Find the nearest package.json file within the current node_modules folder
-    let root = path.parse(dir).root;
-    while (dir !== root && path.basename(dir) !== 'node_modules') {
+    let root = Path.parse(dir).root;
+    while (dir !== root && Path.basename(dir) !== 'node_modules') {
       try {
         return await this.readPackage(dir);
       } catch (err) {
         // ignore
       }
 
-      dir = path.dirname(dir);
+      dir = Path.dirname(dir);
     }
   }
 
+  /**
+   * @param {string} filename
+   * @param {string} dir
+   */
   async loadAlias(filename, dir) {
     // Load the root project's package.json file if we haven't already
     if (!this.rootPackage) {
@@ -425,8 +502,11 @@ class Resolver {
     return this.resolveAliases(filename, pkg);
   }
 
+  /**
+   * @param {string} name
+   */
   getModuleParts(name) {
-    let parts = path.normalize(name).split(path.sep);
+    let parts = Path.normalize(name).split(Path.sep);
     if (parts[0].charAt(0) === '@') {
       // Scoped module (e.g. @scope/module). Merge the first two parts back together.
       parts.splice(0, 2, `${parts[0]}/${parts[1]}`);
